@@ -92,12 +92,12 @@
   <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
     <div class="glass-panel p-6 rounded-2xl">
       <h2 class="text-xl font-semibold mb-2">Ventilador</h2>
-      <p id="fanStatus" class="text-3xl font-bold">--</p>
+      <p id="ventiladorStatus" class="text-3xl font-bold">--</p>
       <button onclick="toggleManual('ventilador')" class="mt-4 w-full bg-blue-600 hover:bg-blue-500 py-3 rounded-xl font-bold">Cambiar Estado</button>
     </div>
     <div class="glass-panel p-6 rounded-2xl">
       <h2 class="text-xl font-semibold mb-2">Calefactor</h2>
-      <p id="heaterStatus" class="text-3xl font-bold">--</p>
+      <p id="calefactorStatus" class="text-3xl font-bold">--</p>
       <button onclick="toggleManual('calefactor')" class="mt-4 w-full bg-orange-600 hover:bg-orange-500 py-3 rounded-xl font-bold">Cambiar Estado</button>
     </div>
   </div>
@@ -140,138 +140,151 @@
 
 <!-- Firebase SDK -->
 <script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-  import { getDatabase, ref, set, onValue, get, child } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
 
-  let app, db;
-  let tempsHistory = [];
+let app, db;
+let tempsHistory = [];
 
-  // Modal Firebase
-  window.openConfig = () => document.getElementById('configModal').classList.remove('hidden');
-  window.closeConfig = () => document.getElementById('configModal').classList.add('hidden');
+// Modal Firebase
+window.openConfig = () => document.getElementById('configModal').classList.remove('hidden');
+window.closeConfig = () => document.getElementById('configModal').classList.add('hidden');
 
-  window.saveConfig = () => {
-    const apiKey = document.getElementById('apiKeyInput').value.trim();
-    const dbUrl = document.getElementById('dbUrlInput').value.trim();
-    if(!apiKey || !dbUrl) return Swal.fire('Error','Faltan datos','error');
-    localStorage.setItem('iot_api_key', apiKey);
-    localStorage.setItem('iot_db_url', dbUrl);
-    initFirebase(apiKey, dbUrl);
-    closeConfig();
-  };
+window.saveConfig = () => {
+  const apiKey = document.getElementById('apiKeyInput').value.trim();
+  const dbUrl = document.getElementById('dbUrlInput').value.trim();
+  if(!apiKey || !dbUrl) return Swal.fire('Error','Faltan datos','error');
+  localStorage.setItem('iot_api_key', apiKey);
+  localStorage.setItem('iot_db_url', dbUrl);
+  initFirebase(apiKey, dbUrl);
+  closeConfig();
+};
 
-  const chartCtx = document.getElementById('chartTemp').getContext('2d');
-  const chart = new Chart(chartCtx, {
-    type: 'line',
-    data: {
-      labels: [],
-      datasets: [
-        { label:'Sensor1', data:[], borderColor:'#facc15', tension:0.3 },
-        { label:'Sensor2', data:[], borderColor:'#3b82f6', tension:0.3 },
-        { label:'Sensor3', data:[], borderColor:'#10b981', tension:0.3 },
-        { label:'Sensor4', data:[], borderColor:'#f43f5e', tension:0.3 },
-        { label:'Promedio', data:[], borderColor:'#8b5cf6', tension:0.3, borderWidth:2 }
-      ]
-    },
-    options: { responsive:true, animation:false, plugins:{legend:{labels:{color:'#fff'}}}, scales:{y:{ticks:{color:'#fff'}}, x:{ticks:{color:'#fff'}}} }
+const chartCtx = document.getElementById('chartTemp').getContext('2d');
+const chart = new Chart(chartCtx, {
+  type: 'line',
+  data: {
+    labels: [],
+    datasets: [
+      { label:'Sensor1', data:[], borderColor:'#facc15', tension:0.3 },
+      { label:'Sensor2', data:[], borderColor:'#3b82f6', tension:0.3 },
+      { label:'Sensor3', data:[], borderColor:'#10b981', tension:0.3 },
+      { label:'Sensor4', data:[], borderColor:'#f43f5e', tension:0.3 },
+      { label:'Promedio', data:[], borderColor:'#8b5cf6', tension:0.3, borderWidth:2 }
+    ]
+  },
+  options: { responsive:true, animation:false, plugins:{legend:{labels:{color:'#fff'}}}, scales:{y:{ticks:{color:'#fff'}}, x:{ticks:{color:'#fff'}}} }
+});
+
+function initFirebase(apiKey,databaseURL){
+  try{
+    const firebaseConfig = { apiKey, databaseURL };
+    app = initializeApp(firebaseConfig);
+    db = getDatabase(app);
+    const sensoresRef = ref(db,'/sensores');
+    const cargasRef = ref(db,'/cargas');
+    
+    // Escuchar sensores
+    onValue(sensoresRef, (snapshot)=>{
+      const data = snapshot.val();
+      if(!data) return;
+      ['t1','t2','t3','t4','promedio'].forEach(k=>{
+        if(data[k]!==undefined) document.getElementById(k).innerText = data[k].toFixed(2)+' °C';
+      });
+
+      // Actualizar gráfica
+      tempsHistory.push([data.t1||0,data.t2||0,data.t3||0,data.t4||0,data.promedio||0]);
+      if(tempsHistory.length>20) tempsHistory.shift();
+      chart.data.labels = tempsHistory.map((_,i)=>i+1);
+      chart.data.datasets.forEach((ds,idx)=>{
+        ds.data = tempsHistory.map(arr=>arr[idx]);
+      });
+      chart.update();
+    });
+
+    // Escuchar cargas
+    onValue(cargasRef,(snapshot)=>{
+      const data = snapshot.val();
+      if(!data) return;
+      document.getElementById('ventiladorStatus').innerText = data.ventilador ? 'ON' : 'OFF';
+      document.getElementById('calefactorStatus').innerText = data.calefactor ? 'ON' : 'OFF';
+      document.getElementById('modeStatus').innerText = data.mode ? data.mode.toUpperCase() : 'AUTO';
+      updateStatusUI(true);
+    });
+
+  } catch(e){
+    console.error(e);
+    Swal.fire('Error','Credenciales inválidas','error');
+    updateStatusUI(false);
+  }
+}
+
+// Contraseña para manual/mode
+function toggleManual(carga){
+  Swal.fire({
+    title:'Ingresa contraseña',
+    input:'password',
+    inputPlaceholder:'Contraseña',
+    inputAttributes:{maxlength:10, autocapitalize:'off', autocorrect:'off'},
+    showCancelButton:true,
+    preConfirm: (password) => {
+      if(password !== '2005'){
+        Swal.showValidationMessage('Contraseña incorrecta');
+      }
+      return password;
+    }
+  }).then((result)=>{
+    if(result.isConfirmed){
+      const path = '/cargas/'+carga;
+      const current = document.getElementById(carga+'Status').innerText==='ON';
+      set(ref(db,path),!current);
+    }
   });
+}
 
-  function initFirebase(apiKey,databaseURL){
-    try{
-      const firebaseConfig = { apiKey, databaseURL };
-      app = initializeApp(firebaseConfig);
-      db = getDatabase(app);
-      const sensoresRef = ref(db,'/sensores');
-      const cargasRef = ref(db,'/cargas');
-      
-      // Escuchar sensores
-      onValue(sensoresRef, (snapshot)=>{
-        const data = snapshot.val();
-        if(!data) return;
-        ['t1','t2','t3','t4','promedio'].forEach(k=>{
-          if(data[k]!==undefined) document.getElementById(k).innerText = data[k].toFixed(2)+' °C';
-        });
-
-        // Actualizar gráfica
-        tempsHistory.push([data.t1||0,data.t2||0,data.t3||0,data.t4||0,data.promedio||0]);
-        if(tempsHistory.length>20) tempsHistory.shift();
-        chart.data.labels = tempsHistory.map((_,i)=>i+1);
-        chart.data.datasets.forEach((ds,idx)=>{
-          ds.data = tempsHistory.map(arr=>arr[idx]);
-        });
-        chart.update();
-      });
-
-      // Escuchar cargas
-      onValue(cargasRef,(snapshot)=>{
-        const data = snapshot.val();
-        if(!data) return;
-        document.getElementById('fanStatus').innerText = data.ventilador ? 'ON' : 'OFF';
-        document.getElementById('heaterStatus').innerText = data.calefactor ? 'ON' : 'OFF';
-        document.getElementById('modeStatus').innerText = data.mode ? data.mode.toUpperCase() : 'AUTO';
-        updateStatusUI(true);
-      });
-
-    } catch(e){
-      console.error(e);
-      Swal.fire('Error','Credenciales inválidas','error');
-      updateStatusUI(false);
+function changeMode(){
+  Swal.fire({
+    title:'Ingresa contraseña',
+    input:'password',
+    inputPlaceholder:'Contraseña',
+    inputAttributes:{maxlength:10, autocapitalize:'off', autocorrect:'off'},
+    showCancelButton:true,
+    preConfirm: (password) => {
+      if(password !== '2005'){
+        Swal.showValidationMessage('Contraseña incorrecta');
+      }
+      return password;
     }
-  }
-
-  function toggleManual(carga){
-    Swal.fire({
-      title:'Ingresa contraseña',
-      input:'password',
-      inputPlaceholder:'Contraseña',
-      inputAttributes:{maxlength:10, autocapitalize:'off', autocorrect:'off'},
-      showCancelButton:true
-    }).then(result=>{
-      if(result.value==='2005'){
-        const path = '/cargas/'+carga;
-        const current = document.getElementById(carga+'Status').innerText==='ON';
-        set(ref(db,path),!current);
-      } else if(result.value) Swal.fire('Error','Contraseña incorrecta','error');
-    });
-  }
-
-  function changeMode(){
-    Swal.fire({
-      title:'Ingresa contraseña',
-      input:'password',
-      inputPlaceholder:'Contraseña',
-      inputAttributes:{maxlength:10, autocapitalize:'off', autocorrect:'off'},
-      showCancelButton:true
-    }).then(result=>{
-      if(result.value==='2005'){
-        const current = document.getElementById('modeStatus').innerText.toLowerCase();
-        const newMode = current==='auto' ? 'manual' : 'auto';
-        set(ref(db,'/cargas/mode'),newMode);
-      } else if(result.value) Swal.fire('Error','Contraseña incorrecta','error');
-    });
-  }
-
-  function updateStatusUI(connected){
-    const el = document.getElementById('statusIndicator');
-    if(connected){
-      el.className="mb-6 flex items-center gap-3 bg-emerald-500/10 border border-emerald-500/20 p-3 rounded-lg";
-      el.innerHTML='<span class="relative flex h-3 w-3"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span><span class="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span></span><span class="text-sm font-medium text-emerald-400">Conectado a Firebase</span>';
-    } else{
-      el.className="mb-6 flex items-center gap-3 bg-red-500/10 border border-red-500/20 p-3 rounded-lg";
-      el.innerHTML='<span class="h-3 w-3 rounded-full bg-red-500"></span><span class="text-sm font-medium text-red-400">Desconectado</span>';
+  }).then((result)=>{
+    if(result.isConfirmed){
+      const current = document.getElementById('modeStatus').innerText.toLowerCase();
+      const newMode = current==='auto' ? 'manual' : 'auto';
+      set(ref(db,'/cargas/mode'),newMode);
     }
+  });
+}
+
+function updateStatusUI(connected){
+  const el = document.getElementById('statusIndicator');
+  if(connected){
+    el.className="mb-6 flex items-center gap-3 bg-emerald-500/10 border border-emerald-500/20 p-3 rounded-lg";
+    el.innerHTML='<span class="relative flex h-3 w-3"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span><span class="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span></span><span class="text-sm font-medium text-emerald-400">Conectado a Firebase</span>';
+  } else{
+    el.className="mb-6 flex items-center gap-3 bg-red-500/10 border border-red-500/20 p-3 rounded-lg";
+    el.innerHTML='<span class="h-3 w-3 rounded-full bg-red-500"></span><span class="text-sm font-medium text-red-400">Desconectado</span>';
   }
+}
 
-  // Cargar config guardada
-  const savedKey = localStorage.getItem('iot_api_key');
-  const savedUrl = localStorage.getItem('iot_db_url');
-  if(savedKey && savedUrl){
-    document.getElementById('apiKeyInput').value = savedKey;
-    document.getElementById('dbUrlInput').value = savedUrl;
-    initFirebase(savedKey,savedUrl);
-  } else setTimeout(openConfig,500);
+// Cargar config guardada
+const savedKey = localStorage.getItem('iot_api_key');
+const savedUrl = localStorage.getItem('iot_db_url');
+if(savedKey && savedUrl){
+  document.getElementById('apiKeyInput').value = savedKey;
+  document.getElementById('dbUrlInput').value = savedUrl;
+  initFirebase(savedKey,savedUrl);
+} else setTimeout(openConfig,500);
 
-  lucide.createIcons();
+lucide.createIcons();
 </script>
 </body>
 </html>
